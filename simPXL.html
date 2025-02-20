@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Simulator</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: black; }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const GRID_SIZE = 3;
+        const COLUMNS = Math.floor(canvas.width / GRID_SIZE);
+        const ROWS = Math.floor(canvas.height / GRID_SIZE);
+        let GRAVITY = -1;
+        const MAX_VELOCITY = 1000;
+        let PARTICLE_TYPE = 'sand'
+
+        let MOUSE_X = 0;
+        let MOUSE_Y = 0;
+        
+        let grid = Array.from({ length: ROWS }, () => Array(COLUMNS).fill(null));
+        let NUM_PARTICLES = 0;
+
+        class Particle {
+            constructor(type, color) {
+                this.type = type;
+                this.color = color;
+                this.vx = 0;
+                this.vy = GRAVITY;
+                this.seen = false;
+            }
+        }
+        
+        // Solving
+        function solveCollision(particle1, particle2){
+            let newVx = (particle1.vx + particle2.vx) / 2 
+            let newVy = (particle1.vy + particle2.vy) / 2 
+            particle1.vx = newVx
+            particle2.vx = newVx
+            particle1.vy = newVy
+            particle2.vy = newVy
+        }
+
+        function solveParticleVelocity(x,y) {
+            // Is cell particle?
+            let cell = grid[y][x];
+            if (!cell) return;
+            NUM_PARTICLES++;
+
+            // Add gravity (Downwards velocity) // (Math.random()*0.5 - 0.25)
+            cell.vy = clamp(cell.vy + GRAVITY, -MAX_VELOCITY, MAX_VELOCITY)
+            cell.vx = 0 //clamp(Math.random()*-4 + 2,  -MAX_VELOCITY, MAX_VELOCITY)
+            
+            if (y+1 < ROWS) { // This still needs to be modified to account for velocity
+                if (grid[y+1][x] != null){
+                    let xDirections = []
+                    if (grid[y+1][x+1] == null) xDirections.push(-1)
+                    if (grid[y+1][x-1] == null) xDirections.push(1)
+                    if (xDirections.length == 0) {
+                        cell.vx = clamp((cell.vx)/(0.00001), -MAX_VELOCITY, MAX_VELOCITY)
+                        cell.vy = cell.vy
+                    } else{
+                        chosenDirection = xDirections[Math.floor(Math.random()*xDirections.length)];
+                        cell.vx = (cell.vx+chosenDirection)*Math.random()*10//clamp((cell.vx+chosenDirection)*3*(Math.random()+0.6),  -MAX_VELOCITY, MAX_VELOCITY)
+                    }
+                }
+            } 
+            cell.seen = false
+        }
+
+        function solveParticleMovement(x, y) {
+            // Is cell particle?
+            let cell = grid[y][x];
+            if (!cell || cell.seen) return;
+            cell.seen = true
+
+            // Quantize particle velocities
+            let qVx = cell.vx < 0 ? Math.ceil(cell.vx) : Math.floor(cell.vx) // add the random element
+            let qVy = cell.vy < 0 ? Math.ceil(cell.vy) : Math.floor(cell.vy)
+            qVx = x - clamp(x - qVx, 0, COLUMNS-1) // If y - qVx is outside of the COLUMNS, qVx is 0
+            qVy = y - clamp(y - qVy, 0, ROWS-1) // If y - qVy is outside of the ROWS, qVy is 0
+            
+            
+       /*     // New system - for later
+            let newX = x
+            let newY = y
+            let XY_stepRatio = qVx/qVy
+        */
+
+            // Set X movement
+            let newX = x
+            let xDirection = qVx < 0 ? -1 : 1
+            for (let tempX = xDirection; (xDirection == -1 ? tempX >= qVx : tempX <= qVx); (xDirection==-1 ? tempX-- : tempX++)){ // When moving downwards with a negative qVy, newY should should iterate over -1,-2,-3,-4... qVy. 
+                if (grid[y][x-tempX] != null){
+                    //cell.vx = 0
+                    solveCollision(grid[y][x], grid[y][x-tempX])
+                    break
+                }
+                newX = x - tempX                
+            } 
+
+            // Set Y movement
+            //console.log(`ROWS: ${ROWS}, clampVal: ${y - qVy}, qVy: ${qVy}, y: ${y}`)
+
+
+            let newY = y
+            let yDirection = qVy < 0 ? -1 : 1
+            for (let tempY = yDirection; (yDirection == -1 ? tempY >= qVy : tempY <= qVy); (yDirection==-1 ? tempY-- : tempY++)){ // When moving downwards with a negative qVy, newY should should iterate over -1,-2,-3,-4... qVy. 
+                if (grid[y - tempY][newX] != null){
+                    solveCollision(grid[y][x], grid[y - tempY][newX])     
+                    cell.vy = 0            
+                    break
+                }
+                newY = y - tempY
+            }
+            
+            
+            // Update location if different
+            if (newY != y || newX != x){
+                grid[newY][newX] = cell
+                grid[y][x] = null
+            }
+        }
+
+        function solveVelocity() {
+            for (let y = ROWS - 1; y >= 0; y--) {
+                for (let x = 0; x < COLUMNS; x++) {
+                    solveParticleVelocity(x, y)
+                }
+            }
+        }
+
+        function solveMovement() {
+            for (let y = ROWS - 1; y >= 0; y--) {
+                for (let x = 0; x < COLUMNS; x++) {
+                    solveParticleMovement(x, y)
+                }
+            }
+        }
+
+        // General
+
+        function clamp(val, min, max){
+            return val < min ? min : (val > max ? max : val)
+        }
+
+        function placeParticle(x, y, type) {
+            for (let xOffset = -2; xOffset < 3; xOffset++){
+                for (let yOffset = -2; yOffset < 3; yOffset++){
+                    if (grid[y+yOffset] && grid[y+yOffset][x+xOffset] === null) {
+                        let color = type === "sand" ? `rgb(${200 + Math.random() * 30 - 15}, ${200 + Math.random() * 30 - 15}, 0)` : `rgb(0, 0, ${200 + Math.random() * 30 - 15})`;
+                        grid[y+yOffset][x+xOffset] = new Particle(type, color);
+                        //grid[y+yOffset][x+xOffset].vx = Math.random()*2 - 1
+                        grid[y+yOffset][x+xOffset].vy = GRAVITY
+                    }
+                }
+            }
+        }
+
+
+        var PLACE_PARTICLE_INTERVAL = null
+
+        function placeParticleOnCursor(event, type){
+            placeParticle(Math.floor(MOUSE_X / GRID_SIZE), Math.floor(MOUSE_Y / GRID_SIZE), type)
+        }
+
+        document.addEventListener("mousedown", (event) => {
+            MOUSE_X = event.clientX
+            MOUSE_Y = event.clientY
+            PLACE_PARTICLE_INTERVAL = setInterval(placeParticleOnCursor, 25, event, PARTICLE_TYPE) 
+        });
+        
+        document.addEventListener("mouseup", (event) => {
+            clearInterval(PLACE_PARTICLE_INTERVAL)
+        });
+
+        document.addEventListener("mousemove", (event) => {
+            // MOUSE_X_VELOCITY = //Possible fun later additions  
+            // MOUSE_Y_VELOCITY = 
+            MOUSE_X = event.clientX
+            MOUSE_Y = event.clientY
+        });
+
+        document.addEventListener("keyup", (event) => {
+            console.log('test');
+            if (event.key == 'g'){
+                GRAVITY = -GRAVITY
+            } else if (event.key == 'w') {
+                PARTICLE_TYPE = 'water'
+            } else if (event.key == 's'){
+                PARTICLE_TYPE = 'sand'
+            }
+        });
+
+
+        function draw() {
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLUMNS; x++) {
+                    if (grid[y][x]) {
+                        ctx.fillStyle = grid[y][x].color;
+                        ctx.fillRect(x * GRID_SIZE, y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+                    }
+                }
+            }
+        }
+        let prevTimestamp = 0
+        
+        function loop() {
+            let timeStamp = performance.now()
+            let fps = Math.round(1000/(timeStamp - prevTimestamp))
+            console.log(`FPS: ${fps}`)
+            NUM_PARTICLES = 0
+            solveVelocity();
+            solveMovement();
+            draw();
+            console.log(`Number of Particles: ${NUM_PARTICLES}`)
+            //requestAnimationFrame(loop);
+            setTimeout(loop, 4);
+            prevTimestamp = timeStamp
+        }
+
+        loop();
+
+    </script>
+</body>
+</html>
